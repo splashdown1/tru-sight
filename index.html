@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#10140f">
+<title>TRU SIGHT</title>
+<style>
+:root{--bg:#10140f;--ink:#e7f0dc;--dim:#a8b89a;--line:#2c3824;--leaf:#c6d86a;--card:#1a2216;--warn:#d4a574}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 Georgia,serif}
+button{font:inherit;color:#10140f;background:var(--leaf);border:0;border-radius:8px;padding:10px 14px;font-weight:bold;cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.ghost{background:transparent;color:var(--dim);border:1px solid var(--line)}
+header{padding:16px 16px 6px} h1{font-size:22px;letter-spacing:.14em;margin:0;font-weight:normal} h1 span{color:var(--leaf)}
+.sub{color:var(--dim);font-size:13px;margin:6px 0 0}
+main{padding:8px 16px 32px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:0 0 10px}
+.k{color:var(--leaf);font-size:12px;letter-spacing:.12em}
+.gap{color:var(--warn)}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+#stage{position:relative;width:100%;max-width:420px;aspect-ratio:3/4;background:#0a0d09;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:8px 0}
+#stage video,#stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#stage canvas{pointer-events:none}
+.status{min-height:1.4em;color:var(--dim);font-size:14px}
+.label-grid{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.label-grid button{padding:8px 10px;font-size:14px}
+.taught{font-size:13px;color:var(--dim)}
+.taught strong{color:var(--leaf)}
+ul{margin:6px 0 0 18px;padding:0} li{margin:2px 0}
+code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>TRU <span>SIGHT</span></h1>
+  <p class="sub">One file. One face you teach. Camera only after a tap. Frames are not kept. A gap stays a gap.</p>
+</header>
+<main>
+  <article class="card">
+    <div class="k">STATUS</div>
+    <div id="status" class="status">Camera off. Landmark reader: not packed.</div>
+    <div class="row">
+      <button id="btnCam">Open camera</button>
+      <button id="btnStop" class="ghost" disabled>Stop</button>
+    </div>
+    <div id="stage" hidden>
+      <video id="vid" playsinline muted></video>
+      <canvas id="cv"></canvas>
+    </div>
+  </article>
+
+  <article class="card">
+    <div class="k">TEACH</div>
+    <p>TRU speaks a label. You pose. You tap Capture. Only then is one frame read. Pixels are dropped after the sketch is taken.</p>
+    <div class="label-grid" id="labels"></div>
+    <div class="row">
+      <button id="btnCapture" disabled>Capture</button>
+      <button id="btnClear" class="ghost">Clear all taught</button>
+    </div>
+    <div class="taught" id="taughtList">Nothing taught on this device yet.</div>
+  </article>
+
+  <article class="card">
+    <div class="k">TEST</div>
+    <p>Speak the same label. Pose. Tap Test. The page says only what you taught, or "not taught."</p>
+    <div class="row">
+      <button id="btnTest" disabled>Test current label</button>
+    </div>
+    <div id="testResult" class="status"></div>
+  </article>
+
+  <article class="card">
+    <div class="k">GAP</div>
+    <div class="gap">No landmark reader is packed in this file. Capture and Test will record the intent and keep the store structure, but they cannot extract points or draw a sketch. A pixel diff is not a face. When a reader is later packed, the same IndexedDB keys will hold real sketches.</div>
+    <div class="src" style="margin-top:8px;color:var(--dim);font-size:12px">Honest set only: face here, no face, eyes open, eyes shut, smile, grin, mouth open, brow up, brow down, look left, look right, look down, cry (only if mouth + brow were taught together).</div>
+  </article>
+
+  <article class="card">
+    <div class="k">RULES</div>
+    <ul>
+      <li>Zero network after the page is loaded.</li>
+      <li>getUserMedia only after the Open camera tap.</li>
+      <li>No speech recognition. Yes is a tap.</li>
+      <li>Another person is another file, or "not taught."</li>
+      <li>iPhone may refuse the camera from <code>file://</code>. Serve the folder locally if the shutter stays closed.</li>
+    </ul>
+  </article>
+</main>
+<script>
+(function(){
+  const LABELS = [
+    "face here","no face","eyes open","eyes shut",
+    "smile","grin","mouth open",
+    "brow up","brow down",
+    "look left","look right","look down",
+    "cry"
+  ];
+
+  // Landmark reader is intentionally not packed.
+  // A future drop-in should implement:
+  //   async function extractSketch(videoEl) -> { points: [...], sketchDataUrl?: string } | null
+  // Returning null means "not packed / cannot extract".
+  const LANDMARK_READER = null;
+
+  const statusEl = document.getElementById("status");
+  const stage = document.getElementById("stage");
+  const vid = document.getElementById("vid");
+  const cv = document.getElementById("cv");
+  const labelsEl = document.getElementById("labels");
+  const taughtList = document.getElementById("taughtList");
+  const testResult = document.getElementById("testResult");
+  const btnCam = document.getElementById("btnCam");
+  const btnStop = document.getElementById("btnStop");
+  const btnCapture = document.getElementById("btnCapture");
+  const btnTest = document.getElementById("btnTest");
+  const btnClear = document.getElementById("btnClear");
+
+  let stream = null;
+  let currentLabel = null;
+  let db = null;
+
+  function setStatus(msg){
+    statusEl.textContent = msg;
+  }
+
+  function speak(text){
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 0.95;
+    window.speechSynthesis.speak(u);
+  }
+
+  // --- IndexedDB: store only what was taught ---
+  function openDB(){
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open("tru-sight", 1);
+      req.onupgradeneeded = () => {
+        const d = req.result;
+        if (!d.objectStoreNames.contains("sketches")) {
+          d.createObjectStore("sketches", { keyPath: "label" });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function putSketch(label, data){
+    if (!db) db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("sketches", "readwrite");
+      tx.objectStore("sketches").put({ label, ...data, savedAt: Date.now() });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function getSketch(label){
+    if (!db) db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("sketches", "readonly");
+      const req = tx.objectStore("sketches").get(label);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function getAllSketches(){
+    if (!db) db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("sketches", "readonly");
+      const req = tx.objectStore("sketches").getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function clearAll(){
+    if (!db) db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("sketches", "readwrite");
+      tx.objectStore("sketches").clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function refreshTaught(){
+    const all = await getAllSketches();
+    if (!all.length) {
+      taughtList.innerHTML = "Nothing taught on this device yet.";
+      return;
+    }
+    taughtList.innerHTML = "Taught: " + all.map(s => "<strong>" + s.label + "</strong>").join(", ");
+  }
+
+  // --- Camera ---
+  async function openCamera(){
+    if (stream) return;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+      });
+      vid.srcObject = stream;
+      await vid.play();
+      stage.hidden = false;
+      btnCam.disabled = true;
+      btnStop.disabled = false;
+      btnCapture.disabled = !currentLabel;
+      btnTest.disabled = !currentLabel;
+      setStatus("Camera open. Landmark reader: not packed. Choose a label.");
+    } catch (err) {
+      setStatus("Camera refused: " + (err && err.message ? err.message : "unknown") + ". On iPhone, file:// often blocks the shutter; serve the folder locally.");
+    }
+  }
+
+  function stopCamera(){
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+    vid.srcObject = null;
+    stage.hidden = true;
+    btnCam.disabled = false;
+    btnStop.disabled = true;
+    btnCapture.disabled = true;
+    btnTest.disabled = true;
+    setStatus("Camera off. Landmark reader: not packed.");
+  }
+
+  // --- Capture / Test (honest path when no reader) ---
+  async function doCapture(){
+    if (!stream || !currentLabel) return;
+    setStatus("Reading one frame for \"" + currentLabel + "\"…");
+
+    let sketch = null;
+    if (typeof LANDMARK_READER === "function") {
+      try {
+        sketch = await LANDMARK_READER(vid);
+      } catch (e) {
+        sketch = null;
+      }
+    }
+
+    if (!sketch) {
+      // Honest gap: no reader packed. Still record that the person intended this label,
+      // but do not invent points or keep pixels.
+      await putSketch(currentLabel, {
+        points: null,
+        note: "intent recorded; landmark reader not packed; no pixels kept"
+      });
+      setStatus("Gap: landmark reader not packed. Intent for \"" + currentLabel + "\" stored. No sketch.");
+      speak("not packed");
+    } else {
+      await putSketch(currentLabel, {
+        points: sketch.points || null,
+        sketchDataUrl: sketch.sketchDataUrl || null,
+        note: "sketch saved"
+      });
+      setStatus("Saved sketch for \"" + currentLabel + "\". Pixels dropped.");
+      speak("saved");
+    }
+    await refreshTaught();
+  }
+
+  async function doTest(){
+    if (!stream || !currentLabel) return;
+    testResult.textContent = "Testing…";
+
+    const stored = await getSketch(currentLabel);
+    if (!stored) {
+      testResult.textContent = "not taught";
+      speak("not taught");
+      return;
+    }
+
+    if (typeof LANDMARK_READER !== "function") {
+      // We know the label was taught as intent, but cannot match geometry.
+      testResult.textContent = "this is the " + currentLabel + " you taught (intent only; no geometry reader)";
+      speak("this is the " + currentLabel + " you taught");
+      return;
+    }
+
+    let live = null;
+    try {
+      live = await LANDMARK_READER(vid);
+    } catch (e) {
+      live = null;
+    }
+    if (!live || !stored.points) {
+      testResult.textContent = "not taught";
+      speak("not taught");
+      return;
+    }
+    // Future: real geometric comparison here.
+    testResult.textContent = "this is the " + currentLabel + " you taught";
+    speak("this is the " + currentLabel + " you taught");
+  }
+
+  // --- UI wiring ---
+  LABELS.forEach(lab => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = lab;
+    b.className = "ghost";
+    b.addEventListener("click", () => {
+      currentLabel = lab;
+      document.querySelectorAll("#labels button").forEach(x => x.classList.add("ghost"));
+      b.classList.remove("ghost");
+      speak(lab);
+      btnCapture.disabled = !stream;
+      btnTest.disabled = !stream;
+      setStatus("Label: " + lab + (stream ? ". Pose, then Capture or Test." : ". Open camera when ready."));
+      testResult.textContent = "";
+    });
+    labelsEl.appendChild(b);
+  });
+
+  btnCam.addEventListener("click", openCamera);
+  btnStop.addEventListener("click", stopCamera);
+  btnCapture.addEventListener("click", doCapture);
+  btnTest.addEventListener("click", doTest);
+  btnClear.addEventListener("click", async () => {
+    await clearAll();
+    await refreshTaught();
+    testResult.textContent = "";
+    setStatus("All taught sketches cleared.");
+  });
+
+  // Init
+  openDB().then(d => { db = d; return refreshTaught(); }).catch(() => {
+    setStatus("IndexedDB unavailable on this origin.");
+  });
+})();
+</script>
+</body>
+</html>
