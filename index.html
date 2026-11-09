@@ -30,6 +30,11 @@ ul{margin:6px 0 0 18px;padding:0} li{margin:2px 0}
 code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
 #modelStatus{font-size:13px;color:var(--dim);margin-top:6px}
 #modelStatus.ready{color:var(--leaf)}
+.threshold{margin:10px 0 4px}
+.threshold label{display:flex;justify-content:space-between;align-items:center;font-size:14px;color:var(--dim);margin-bottom:6px}
+.threshold label strong{color:var(--leaf);font-variant-numeric:tabular-nums}
+.threshold input[type=range]{width:100%;accent-color:var(--leaf)}
+.threshold .hint{font-size:12px;color:var(--dim);margin-top:4px}
 </style>
 </head>
 <body>
@@ -46,6 +51,11 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
       <button id="btnClearModel" class="ghost" hidden>Remove model</button>
     </div>
     <div id="modelStatus">Model not on this device yet.</div>
+    <div class="threshold">
+      <label for="scoreThreshold">Face detection confidence <strong id="scoreThresholdVal">0.40</strong></label>
+      <input id="scoreThreshold" type="range" min="0.10" max="0.90" step="0.05" value="0.40">
+      <div class="hint">Higher rejects weak detections. Lower accepts harder poses / farther faces. Used on Capture and Test.</div>
+    </div>
   </article>
 
   <article class="card">
@@ -140,6 +150,33 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
   let db = null;
   let readerReady = false;
   let readerKind = "none";
+  let scoreThreshold = 0.40;
+
+  const scoreSlider = document.getElementById("scoreThreshold");
+  const scoreValEl = document.getElementById("scoreThresholdVal");
+
+  function loadThreshold(){
+    try {
+      const v = parseFloat(localStorage.getItem("tru-sight-scoreThreshold"));
+      if (!isNaN(v) && v >= 0.1 && v <= 0.9) scoreThreshold = Math.round(v * 20) / 20;
+    } catch (e) {}
+    if (scoreSlider) {
+      scoreSlider.value = String(scoreThreshold);
+      scoreValEl.textContent = scoreThreshold.toFixed(2);
+    }
+  }
+  function saveThreshold(v){
+    scoreThreshold = v;
+    try { localStorage.setItem("tru-sight-scoreThreshold", String(v)); } catch (e) {}
+    if (scoreValEl) scoreValEl.textContent = v.toFixed(2);
+  }
+  if (scoreSlider) {
+    scoreSlider.addEventListener("input", () => {
+      const v = parseFloat(scoreSlider.value);
+      saveThreshold(v);
+    });
+  }
+  loadThreshold();
 
   function setStatus(msg){ statusEl.textContent = msg; }
   function setModelStatus(msg, ready){
@@ -411,13 +448,15 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
   }
 
   async function extract68(videoEl){
-    const opt = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 });
+    const opt = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: scoreThreshold });
     const det = await faceapi.detectSingleFace(videoEl, opt).withFaceLandmarks(true);
     if (!det || !det.landmarks) return null;
+    const score = (det.detection && typeof det.detection.score === "number") ? det.detection.score : null;
+    if (score !== null && score < scoreThreshold) return null;
     const points = det.landmarks.positions.map(p => [p.x, p.y]);
     if (points.length !== 68) return null;
     const w = videoEl.videoWidth || 640, h = videoEl.videoHeight || 480;
-    return { points: normalize68(points), rawPoints: points, sketchDataUrl: drawSketch68(points,w,h), kind: "face-api-68", count: 68 };
+    return { points: normalize68(points), rawPoints: points, sketchDataUrl: drawSketch68(points,w,h), kind: "face-api-68", count: 68, score: score };
   }
 
   async function extractFD(videoEl){
@@ -498,7 +537,8 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
       count: sketch.count,
       note: "landmark sketch saved; pixels dropped"
     });
-    setStatus("Saved " + sketch.count + "-point sketch for \"" + currentLabel + "\". Pixels dropped.");
+    const scoreNote = (typeof sketch.score === "number") ? (" score " + sketch.score.toFixed(2) + " (threshold " + scoreThreshold.toFixed(2) + ")") : "";
+    setStatus("Saved " + sketch.count + "-point sketch for \"" + currentLabel + "\"." + scoreNote + ". Pixels dropped.");
     speak("saved");
     await refreshTaught();
   }
