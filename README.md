@@ -1,8 +1,16 @@
 # TRU SIGHT
 
-Pinned 2026-10-02. Not a ship yet. No camera. No sketches. No page.
+One file. One face you teach. Camera only after a tap. Frames are not kept. A gap stays a gap.
 
-Come back to this file when the sight lane is worth building. Until then the hurricane answer stays on Lifeline, Water, Fire, Shelter, Cold, and Pantry. A face does not make that card smarter.
+Open the page: https://splashdown1.github.io/tru-sight/
+
+## Status (2026-11-09)
+
+Skeleton is built (`index.html`).
+
+- Camera flow, speechSynthesis labels, IndexedDB store, capture/test UI, and the honest label set are in place.
+- **Landmark reader is not packed.** Capture records intent and keeps the store structure. It does not extract points, draw a sketch, or invent a match. The page says so.
+- Shelf still does not promote it as a finished lane. A face does not make Lifeline or the field cards smarter.
 
 ## What this is
 
@@ -29,20 +37,10 @@ One person, one file. The file may learn the poses that person taught, and no on
 9. Honest set, no more: face here, no face, eyes open, eyes shut, smile, grin, mouth open, brow up, brow down, look left, look right, look down, and cry only if the mouth and brow were taught together. Past that, not packed.
 10. Another person is another file, or "not taught." This ship does not know the fleet.
 
-## Prompt for later
+## Next real step
 
-Paste this when the pin comes out. Do not widen it.
+Pack a true landmark reader inside the single file (no network fetch). Until that lands, geometry stays a gap. Do not widen the prompt. Do not fake matches.
 
-> Build TRU Sight as one self-contained HTML file. Zero network calls, zero uploads, zero cloud. It is a pin coming off the shelf, not a new product.
->
-> The camera opens only after a tap. Live frames stay in the preview and are discarded. TRU speaks a single packed label with speechSynthesis (smile, grin, eyes open, eyes shut, brow up, brow down, look left, look right, look down, mouth open, cry). The person poses and taps capture. Only then does the page read the frame once.
->
-> If a landmark reader is packed in the file, keep the points and draw the sketch, then drop the pixels. Store the sketch under that label in IndexedDB. If no reader is packed, store nothing and show a gap card: not packed. Do not fake a match with a pixel diff. Do not use the Web Speech recognizer. Do not call getUserMedia until the tap. Do not write a frame that was not asked for.
->
-> A later test speaks the same label, the person poses, and the page says "this is the smile you taught" or "not taught." Unknown labels stay silent. No mood. No intent. No name. A second face is not taught unless that person has their own file.
->
-> iPhone must be able to open it. If the camera will not start from file://, say so on the page. Do not add a server.
+## License / provenance
 
-## Status
-
-Pinned. Not built. Shelf does not list it.
+Source-bound rules. Owner: splashdown1.
