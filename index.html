@@ -28,19 +28,30 @@ main{padding:8px 16px 32px}
 .taught strong{color:var(--leaf)}
 ul{margin:6px 0 0 18px;padding:0} li{margin:2px 0}
 code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
+#modelStatus{font-size:13px;color:var(--dim);margin-top:6px}
+#modelStatus.ready{color:var(--leaf)}
 </style>
 </head>
 <body>
 <header>
   <h1>TRU <span>SIGHT</span></h1>
-  <p class="sub">One face you teach. Camera only after a tap. Frames are not kept. 68-point geometry after a one-time offline install.</p>
+  <p class="sub">One face you teach. Camera only after a tap. Frames are not kept. 68-point geometry after you download the model.</p>
 </header>
 <main>
   <article class="card">
-    <div class="k">STATUS</div>
-    <div id="status" class="status">Checking 68-point reader…</div>
+    <div class="k">MODEL</div>
+    <p>Download the 68-point landmark model once (~1 MB). It is stored on this device. After that, the reader does not call the network.</p>
     <div class="row">
-      <button id="btnInstall" class="ghost" hidden>Install 68-point reader (~1 MB, one-time)</button>
+      <button id="btnDownload">Download model</button>
+      <button id="btnClearModel" class="ghost" hidden>Remove model</button>
+    </div>
+    <div id="modelStatus">Model not on this device yet.</div>
+  </article>
+
+  <article class="card">
+    <div class="k">STATUS</div>
+    <div id="status" class="status">Checking reader…</div>
+    <div class="row">
       <button id="btnCam" disabled>Open camera</button>
       <button id="btnStop" class="ghost" disabled>Stop</button>
     </div>
@@ -72,14 +83,14 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
 
   <article class="card">
     <div class="k">READER</div>
-    <div id="readerInfo">68-point pack: face-api.js tiny detector + 68-point tiny landmarks. Install once (network), then runs offline from device storage. No cloud inference.</div>
+    <div id="readerInfo">68-point pack: face-api.js tiny detector + 68-point tiny landmarks. Download once, then offline.</div>
     <div class="src" style="margin-top:8px;color:var(--dim);font-size:12px">Honest set only: face here, no face, eyes open, eyes shut, smile, grin, mouth open, brow up, brow down, look left, look right, look down, cry (only if mouth + brow were taught together).</div>
   </article>
 
   <article class="card">
     <div class="k">RULES</div>
     <ul>
-      <li>Install is the only intentional network step. After that, the reader does not call out.</li>
+      <li>Download model is the only intentional network step for the reader.</li>
       <li>getUserMedia only after the Open camera tap.</li>
       <li>No speech recognition. Yes is a tap.</li>
       <li>Another person is another file, or "not taught."</li>
@@ -108,13 +119,15 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
   ];
 
   const statusEl = document.getElementById("status");
+  const modelStatus = document.getElementById("modelStatus");
   const stage = document.getElementById("stage");
   const vid = document.getElementById("vid");
   const cv = document.getElementById("cv");
   const labelsEl = document.getElementById("labels");
   const taughtList = document.getElementById("taughtList");
   const testResult = document.getElementById("testResult");
-  const btnInstall = document.getElementById("btnInstall");
+  const btnDownload = document.getElementById("btnDownload");
+  const btnClearModel = document.getElementById("btnClearModel");
   const btnCam = document.getElementById("btnCam");
   const btnStop = document.getElementById("btnStop");
   const btnCapture = document.getElementById("btnCapture");
@@ -129,6 +142,10 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
   let readerKind = "none";
 
   function setStatus(msg){ statusEl.textContent = msg; }
+  function setModelStatus(msg, ready){
+    modelStatus.textContent = msg;
+    modelStatus.className = ready ? "ready" : "";
+  }
   function speak(text){
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
@@ -148,31 +165,57 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
     } catch (e) { return false; }
   }
 
-  async function installPack(){
-    btnInstall.disabled = true;
-    setStatus("Downloading 68-point pack (~1 MB)…");
+  async function downloadModel(){
+    btnDownload.disabled = true;
+    btnDownload.textContent = "Downloading…";
+    setStatus("Downloading 68-point model (~1 MB)…");
+    setModelStatus("Downloading…", false);
     try {
       const c = await caches.open(CACHE_NAME);
+      setModelStatus("Downloading face-api.js…", false);
       await c.add(FA_URL);
       for (const f of MODEL_FILES) {
+        setModelStatus("Downloading " + f + "…", false);
         setStatus("Downloading " + f + "…");
         await c.add(MODEL_BASE + "/" + f);
       }
-      setStatus("Pack stored on device. Loading reader…");
-      btnInstall.hidden = true;
+      setModelStatus("Model saved on this device.", true);
+      setStatus("Model downloaded. Loading reader…");
+      btnDownload.textContent = "Download model";
+      btnDownload.disabled = true;
+      btnClearModel.hidden = false;
       await bootFromCache();
+      speak("model ready");
     } catch (err) {
-      btnInstall.disabled = false;
-      setStatus("Install failed: " + (err && err.message ? err.message : err));
-      tryFaceDetectorFallback("install failed");
+      btnDownload.disabled = false;
+      btnDownload.textContent = "Download model";
+      setModelStatus("Download failed: " + (err && err.message ? err.message : err), false);
+      setStatus("Download failed: " + (err && err.message ? err.message : err));
+      tryFaceDetectorFallback("download failed");
     }
+  }
+
+  async function removeModel(){
+    try {
+      if ("caches" in window) await caches.delete(CACHE_NAME);
+    } catch (e) {}
+    readerReady = false;
+    readerKind = "none";
+    window.faceapi = undefined;
+    btnCam.disabled = true;
+    btnDownload.disabled = false;
+    btnDownload.textContent = "Download model";
+    btnClearModel.hidden = true;
+    setModelStatus("Model removed from this device.", false);
+    setStatus("Model removed. Download again for 68-point geometry.");
+    readerInfo.textContent = "68-point pack removed. Tap Download model to fetch it again.";
+    tryFaceDetectorFallback("model removed");
   }
 
   async function cachedResponse(url){
     const c = await caches.open(CACHE_NAME);
     let res = await c.match(url);
     if (res) return res;
-    // match by pathname suffix
     const keys = await c.keys();
     const hit = keys.find(k => k.url.indexOf(url.split("/").pop()) !== -1);
     return hit ? c.match(hit) : null;
@@ -194,10 +237,11 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
   }
 
   function installCachedFetch(){
+    if (window.__truFetchPatched) return;
+    window.__truFetchPatched = true;
     const realFetch = window.fetch.bind(window);
     window.fetch = async function(input, init){
       const url = typeof input === "string" ? input : (input && input.url) || "";
-      // face-api loadFromUri will request MODEL_BASE + "/" + file
       if (url.indexOf("tiny_face_detector") !== -1 || url.indexOf("face_landmark_68_tiny") !== -1) {
         const name = url.split("/").pop().split("?")[0];
         const res = await cachedResponse(name);
@@ -214,7 +258,6 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
   async function bootFromCache(){
     installCachedFetch();
     await loadFaceApiFromCache();
-    // Point loadFromUri at MODEL_BASE; fetch is patched to serve cache
     await Promise.all([
       faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_BASE),
       faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_BASE)
@@ -222,9 +265,12 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
     readerReady = true;
     readerKind = "face-api-68";
     btnCam.disabled = false;
-    btnInstall.hidden = true;
-    setStatus("68-point landmark reader ready (offline pack). Camera off.");
-    readerInfo.textContent = "Reader: face-api.js tiny detector + 68-point tiny landmarks. Loaded from on-device cache. No network after install.";
+    btnDownload.disabled = true;
+    btnDownload.textContent = "Model on device";
+    btnClearModel.hidden = false;
+    setModelStatus("68-point model ready on this device.", true);
+    setStatus("68-point landmark reader ready. Camera off.");
+    readerInfo.textContent = "Reader: face-api.js tiny detector + 68-point tiny landmarks. Loaded from on-device cache. No network after download.";
   }
 
   function tryFaceDetectorFallback(reason){
@@ -236,8 +282,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
         readerKind = "FaceDetector";
         btnCam.disabled = false;
         setStatus("Using FaceDetector fallback (not 68-point). " + reason);
-        readerInfo.textContent = "Fallback: browser FaceDetector. Install the 68-point pack for full mesh geometry.";
-        btnInstall.hidden = false;
+        readerInfo.textContent = "Fallback: browser FaceDetector. Tap Download model for full 68-point geometry.";
         return true;
       } catch (e) {}
     }
@@ -247,19 +292,22 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
   async function initReader(){
     try {
       if (await cacheHasPack()) {
-        setStatus("Found offline 68-point pack. Loading…");
+        setModelStatus("Found model on this device. Loading…", true);
+        setStatus("Found offline 68-point model. Loading…");
         await bootFromCache();
         return;
       }
     } catch (e) {}
-    // No pack yet
-    btnInstall.hidden = false;
-    if (!tryFaceDetectorFallback("pack not installed")) {
+    setModelStatus("Model not on this device yet. Tap Download model.", false);
+    btnDownload.disabled = false;
+    btnDownload.textContent = "Download model";
+    btnClearModel.hidden = true;
+    if (!tryFaceDetectorFallback("model not downloaded")) {
       readerReady = false;
       readerKind = "none";
       btnCam.disabled = true;
-      setStatus("not packed — install the 68-point reader (needs one network pull)");
-      readerInfo.innerHTML = "<span class=\"gap\">Gap: no reader on this device yet.</span> Tap Install for the 68-point pack (~1 MB, one-time), or use a Chromium browser for FaceDetector fallback.";
+      setStatus("not packed — download the 68-point model first");
+      readerInfo.innerHTML = "<span class=\"gap\">Gap: no 68-point model on this device.</span> Tap <strong>Download model</strong> (~1 MB, one-time network). Chromium may offer FaceDetector as a thinner fallback.";
     }
   }
 
@@ -403,7 +451,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
 
   async function openCamera(){
     if (stream) return;
-    if (!readerReady) { setStatus("Landmark reader not ready."); return; }
+    if (!readerReady) { setStatus("Landmark reader not ready. Download the model first."); return; }
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
@@ -495,7 +543,8 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
     labelsEl.appendChild(b);
   });
 
-  btnInstall.addEventListener("click", installPack);
+  btnDownload.addEventListener("click", downloadModel);
+  btnClearModel.addEventListener("click", removeModel);
   btnCam.addEventListener("click", openCamera);
   btnStop.addEventListener("click", stopCamera);
   btnCapture.addEventListener("click", doCapture);
