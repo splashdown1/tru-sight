@@ -2,41 +2,58 @@
 
 One face you teach. Camera only after a tap. Frames are not kept. A gap stays a gap.
 
-Open the page: https://splashdown1.github.io/tru-sight/ (enable GitHub Pages on `main` / root if 404).
+Open the page: https://splashdown1.github.io/tru-sight/
+
+**GitHub Pages:** Settings → Pages → Deploy from branch **main** / **/** (root). Until that is on, the URL 404s; open `index.html` via a local server instead.
 
 ## Status (2026-11-09)
 
-**68-point landmark reader** is available via a one-time offline install.
+Pinned tip: `20d52377a7205dd2538d5f8afec668ef98f944bd`
 
-Pinned commit: `d2fbf61a936ae18598c3efe793118b0fd484e60c`
+### Reader
 
-### How the reader works
+- **Download model** — one-time ~1 MB pull into Cache API (face-api tiny detector + 68-point landmarks). Then offline.
+- **Face detection confidence** slider (0.10–0.90, default 0.40), with show/hide toggle. Stored in `localStorage`.
+- Capture stores normalized 68 points; pixels dropped; sketch overlay.
+- Test compares geometry; match or `not taught`.
+- Fallback: Chromium `FaceDetector` if the pack is not installed (fewer points; labeled honestly).
 
-1. Tap **Install 68-point reader (~1 MB, one-time)**.
-2. The page downloads face-api.js + tiny face detector + 68-point tiny landmark weights into the browser **Cache API**.
-3. After that, the reader loads from device storage — **no network** for inference.
-4. Capture extracts **68 points**, normalizes by inter-ocular distance, stores points, drops pixels, draws a sketch.
-5. Test compares live 68-point geometry to the taught sketch (mean distance threshold).
+### Device checklist
 
-### Fallback
+1. Enable Pages (or `python3 -m http.server` in the repo folder).
+2. Download model → status says ready.
+3. Open camera (after tap only).
+4. Pick a label → pose → Capture → taught list updates.
+5. Same label → Test → match or `not taught`.
+6. Bad pose / no face → nothing stored / `not taught`.
 
-If the pack is not installed, Chromium’s **FaceDetector** API is used when present (fewer points). The page says so. It does not fake 68-point matches.
+### Shelf pin
 
-### Honest limits
+```bash
+python3 tru_shelf.py propose \
+  --repo splashdown1/tru-sight \
+  --sha 20d52377a7205dd2538d5f8afec668ef98f944bd \
+  --path index.html \
+  --note "68-point Sight: download model, confidence threshold, offline cache" \
+  --by splashdown1
+# then: python3 tru_shelf.py approve <id>
+# then: python3 tru_shelf.py check
+```
 
-- Install needs network **once**. Runtime after install does not call out for models.
-- Not mood, intent, or a name for a stranger.
-- Another person is another file, or "not taught."
+Also pin define-modules (Strong's repair) if not already:
 
-### Why not a fully inlined single HTML
-
-Inlining ~1 MB of weights through the repo API was unreliable. Cache-based install keeps the lane honest: one explicit pull, then offline geometry.
-
-Local pre-built pack fragments also exist under the build workspace (`tru-sight-fa-*.js`, `tru-sight-pack-2/3.js`) if you want to vendor them into the repo later as same-origin files and drop the CDN install step.
+```bash
+python3 tru_shelf.py propose \
+  --repo splashdown1/tru-define-modules \
+  --sha 8f511cbf6af6e469142ea3af418512e4fb24ea66 \
+  --path TRU-bible-only-v2.1.3.html \
+  --note "Strong's repair; define Graces -> G5485" \
+  --by splashdown1
+```
 
 ## Rules
 
-1. Install is the only intentional network step for the reader.
+1. Download model is the only intentional network step for the reader.
 2. getUserMedia only after Open camera.
 3. Yes is a tap. No speech recognition.
 4. Store points only when landmarks extract. Otherwise store nothing.
