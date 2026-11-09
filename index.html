@@ -33,14 +33,14 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
 <body>
 <header>
   <h1>TRU <span>SIGHT</span></h1>
-  <p class="sub">One file. One face you teach. Camera only after a tap. Frames are not kept. A gap stays a gap.</p>
+  <p class="sub">One face you teach. Camera only after a tap. Frames are not kept. Geometry from a packed 68-point reader. A gap stays a gap.</p>
 </header>
 <main>
   <article class="card">
     <div class="k">STATUS</div>
-    <div id="status" class="status">Camera off. Landmark reader: not packed.</div>
+    <div id="status" class="status">Loading packed landmark reader…</div>
     <div class="row">
-      <button id="btnCam">Open camera</button>
+      <button id="btnCam" disabled>Open camera</button>
       <button id="btnStop" class="ghost" disabled>Stop</button>
     </div>
     <div id="stage" hidden>
@@ -51,7 +51,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
 
   <article class="card">
     <div class="k">TEACH</div>
-    <p>TRU speaks a label. You pose. You tap Capture. Only then is one frame read. Pixels are dropped after the sketch is taken.</p>
+    <p>TRU speaks a label. You pose. You tap Capture. Only then is one frame read. Points are kept; pixels are dropped.</p>
     <div class="label-grid" id="labels"></div>
     <div class="row">
       <button id="btnCapture" disabled>Capture</button>
@@ -62,7 +62,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
 
   <article class="card">
     <div class="k">TEST</div>
-    <p>Speak the same label. Pose. Tap Test. The page says only what you taught, or "not taught."</p>
+    <p>Speak the same label. Pose. Tap Test. Geometry is compared to what you taught — or the page says not taught.</p>
     <div class="row">
       <button id="btnTest" disabled>Test current label</button>
     </div>
@@ -70,22 +70,25 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
   </article>
 
   <article class="card">
-    <div class="k">GAP</div>
-    <div class="gap">No landmark reader is packed in this file. Capture stores nothing and says not packed. Test says not taught. A pixel diff is not a face. When a reader is later packed, the same IndexedDB keys will hold real sketches.</div>
+    <div class="k">READER</div>
+    <div id="readerInfo">Packed offline: face-api.js tiny face detector + 68-point tiny landmarks. Loaded from local pack files next to this page. No CDN. No upload.</div>
     <div class="src" style="margin-top:8px;color:var(--dim);font-size:12px">Honest set only: face here, no face, eyes open, eyes shut, smile, grin, mouth open, brow up, brow down, look left, look right, look down, cry (only if mouth + brow were taught together).</div>
   </article>
 
   <article class="card">
     <div class="k">RULES</div>
     <ul>
-      <li>Zero network after the page is loaded.</li>
+      <li>No external network after the pack is on the device.</li>
       <li>getUserMedia only after the Open camera tap.</li>
       <li>No speech recognition. Yes is a tap.</li>
       <li>Another person is another file, or "not taught."</li>
-      <li>iPhone may refuse the camera from <code>file://</code>. Serve the folder locally if the shutter stays closed.</li>
+      <li>Serve this folder locally if the camera or pack will not load from <code>file://</code>.</li>
     </ul>
   </article>
 </main>
+<script src="tru-sight-pack-1.js"></script>
+<script src="tru-sight-pack-2.js"></script>
+<script src="tru-sight-pack-3.js"></script>
 <script>
 (function(){
   const LABELS = [
@@ -96,11 +99,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
     "cry"
   ];
 
-  // Landmark reader is intentionally not packed.
-  // A future drop-in should implement:
-  //   async function extractSketch(videoEl) -> { points: [...], sketchDataUrl?: string } | null
-  // Returning null means "not packed / cannot extract".
-  const LANDMARK_READER = null;
+  const MATCH_THRESHOLD = 0.085;
 
   const statusEl = document.getElementById("status");
   const stage = document.getElementById("stage");
@@ -114,14 +113,14 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
   const btnCapture = document.getElementById("btnCapture");
   const btnTest = document.getElementById("btnTest");
   const btnClear = document.getElementById("btnClear");
+  const readerInfo = document.getElementById("readerInfo");
 
   let stream = null;
   let currentLabel = null;
   let db = null;
+  let readerReady = false;
 
-  function setStatus(msg){
-    statusEl.textContent = msg;
-  }
+  function setStatus(msg){ statusEl.textContent = msg; }
 
   function speak(text){
     if (!window.speechSynthesis) return;
@@ -131,10 +130,88 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
     window.speechSynthesis.speak(u);
   }
 
-  // --- IndexedDB: store only real sketches (points required) ---
+  function b64ToBytes(b64){
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function b64ToBlobUrl(b64, mime){
+    return URL.createObjectURL(new Blob([b64ToBytes(b64)], { type: mime }));
+  }
+
+  async function loadScriptFromB64(b64){
+    const url = b64ToBlobUrl(b64, "application/javascript");
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = url;
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error("face-api script failed to load"));
+      document.head.appendChild(s);
+    });
+  }
+
+  function installPackFetch(pack){
+    const files = {
+      "tiny_face_detector_model-weights_manifest.json": {
+        mime: "application/json",
+        b64: pack["models/tiny_face_detector_model-weights_manifest.json"]
+      },
+      "tiny_face_detector_model-shard1": {
+        mime: "application/octet-stream",
+        b64: pack["models/tiny_face_detector_model-shard1"]
+      },
+      "face_landmark_68_tiny_model-weights_manifest.json": {
+        mime: "application/json",
+        b64: pack["models/face_landmark_68_tiny_model-weights_manifest.json"]
+      },
+      "face_landmark_68_tiny_model-shard1": {
+        mime: "application/octet-stream",
+        b64: pack["models/face_landmark_68_tiny_model-shard1"]
+      }
+    };
+    const base = "https://tru-sight.local/models/";
+    const realFetch = window.fetch.bind(window);
+    window.fetch = function(input, init){
+      const url = typeof input === "string" ? input : (input && input.url) || "";
+      if (url.indexOf(base) === 0) {
+        const name = url.slice(base.length).split("?")[0];
+        const f = files[name];
+        if (!f) return Promise.reject(new Error("pack miss: " + name));
+        const bytes = b64ToBytes(f.b64);
+        return Promise.resolve(new Response(bytes, { status: 200, headers: { "Content-Type": f.mime } }));
+      }
+      return realFetch(input, init);
+    };
+    return base;
+  }
+
+  async function initReader(){
+    try {
+      if (!window.TRU_SIGHT_PACK_1 || !window.TRU_SIGHT_PACK_2 || !window.TRU_SIGHT_PACK_3) throw new Error("reader pack fragments missing");
+      const pack = Object.assign({}, window.TRU_SIGHT_PACK_1, window.TRU_SIGHT_PACK_2, window.TRU_SIGHT_PACK_3);
+      await loadScriptFromB64(pack["face-api.min.js"]);
+      if (!window.faceapi) throw new Error("faceapi global missing after script load");
+      const modelBaseUrl = installPackFetch(pack);
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(modelBaseUrl.replace(/\/$/, "")),
+        faceapi.nets.faceLandmark68TinyNet.loadFromUri(modelBaseUrl.replace(/\/$/, ""))
+      ]);
+      readerReady = true;
+      btnCam.disabled = false;
+      setStatus("Landmark reader packed and ready. Camera off.");
+      readerInfo.textContent = "Packed offline: face-api.js tiny face detector + 68-point tiny landmarks. Ready. No CDN.";
+    } catch (err) {
+      readerReady = false;
+      setStatus("Landmark reader failed to load: " + (err && err.message ? err.message : err));
+      readerInfo.textContent = "Pack load failed. Serve this folder over http (not file://) and keep the tru-sight-pack-*.js files beside index.html.";
+    }
+  }
+
   function openDB(){
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open("tru-sight", 1);
+      const req = indexedDB.open("tru-sight", 2);
       req.onupgradeneeded = () => {
         const d = req.result;
         if (!d.objectStoreNames.contains("sketches")) {
@@ -195,9 +272,87 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
     taughtList.innerHTML = "Taught: " + all.map(s => "<strong>" + s.label + "</strong>").join(", ");
   }
 
-  // --- Camera ---
+  function landmarksToPoints(landmarks){
+    return landmarks.positions.map(p => [p.x, p.y]);
+  }
+
+  function interOcular(points){
+    const a = points[36], b = points[45];
+    const dx = a[0]-b[0], dy = a[1]-b[1];
+    return Math.sqrt(dx*dx + dy*dy) || 1;
+  }
+
+  function normalizePoints(points){
+    const iod = interOcular(points);
+    const cx = (points[36][0] + points[45][0]) / 2;
+    const cy = (points[36][1] + points[45][1]) / 2;
+    return points.map(([x,y]) => [(x - cx) / iod, (y - cy) / iod]);
+  }
+
+  function meanDistance(a, b){
+    if (!a || !b || a.length !== b.length) return Infinity;
+    let s = 0;
+    for (let i = 0; i < a.length; i++) {
+      const dx = a[i][0]-b[i][0], dy = a[i][1]-b[i][1];
+      s += Math.sqrt(dx*dx + dy*dy);
+    }
+    return s / a.length;
+  }
+
+  function drawSketch(points, videoEl){
+    const w = videoEl.videoWidth || 640;
+    const h = videoEl.videoHeight || 480;
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext("2d");
+    ctx.clearRect(0,0,w,h);
+    ctx.strokeStyle = "#c6d86a";
+    ctx.fillStyle = "#c6d86a";
+    ctx.lineWidth = 2;
+    function poly(start, end, closed){
+      ctx.beginPath();
+      for (let i = start; i <= end; i++) {
+        const p = points[i];
+        if (i === start) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+      }
+      if (closed) ctx.closePath();
+      ctx.stroke();
+    }
+    poly(0, 16, false);
+    poly(17, 21, false);
+    poly(22, 26, false);
+    poly(27, 30, false);
+    poly(31, 35, false);
+    poly(36, 41, true);
+    poly(42, 47, true);
+    poly(48, 60, true);
+    poly(61, 67, true);
+    for (const p of points) {
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 1.5, 0, Math.PI*2);
+      ctx.fill();
+    }
+    return cv.toDataURL("image/png");
+  }
+
+  async function extractSketch(videoEl){
+    if (!readerReady || !window.faceapi) return null;
+    const opt = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 });
+    const det = await faceapi.detectSingleFace(videoEl, opt).withFaceLandmarks(true);
+    if (!det || !det.landmarks) return null;
+    const points = landmarksToPoints(det.landmarks);
+    const sketchDataUrl = drawSketch(points, videoEl);
+    const norm = normalizePoints(points);
+    return { points: norm, rawPoints: points, sketchDataUrl: sketchDataUrl };
+  }
+
+  const LANDMARK_READER = extractSketch;
+
   async function openCamera(){
     if (stream) return;
+    if (!readerReady) {
+      setStatus("Landmark reader not ready.");
+      return;
+    }
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
@@ -210,9 +365,9 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
       btnStop.disabled = false;
       btnCapture.disabled = !currentLabel;
       btnTest.disabled = !currentLabel;
-      setStatus("Camera open. Landmark reader: not packed. Choose a label.");
+      setStatus("Camera open. Landmark reader ready. Choose a label.");
     } catch (err) {
-      setStatus("Camera refused: " + (err && err.message ? err.message : "unknown") + ". On iPhone, file:// often blocks the shutter; serve the folder locally.");
+      setStatus("Camera refused: " + (err && err.message ? err.message : "unknown") + ". Serve the folder locally if file:// blocks the shutter.");
     }
   }
 
@@ -223,39 +378,33 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
     }
     vid.srcObject = null;
     stage.hidden = true;
-    btnCam.disabled = false;
+    const ctx = cv.getContext("2d");
+    if (cv.width) ctx.clearRect(0,0,cv.width,cv.height);
+    btnCam.disabled = !readerReady;
     btnStop.disabled = true;
     btnCapture.disabled = true;
     btnTest.disabled = true;
-    setStatus("Camera off. Landmark reader: not packed.");
+    setStatus(readerReady ? "Camera off. Landmark reader ready." : "Camera off.");
   }
 
-  // --- Capture / Test ---
   async function doCapture(){
     if (!stream || !currentLabel) return;
     setStatus("Reading one frame for \"" + currentLabel + "\"…");
-
     let sketch = null;
-    if (typeof LANDMARK_READER === "function") {
-      try {
-        sketch = await LANDMARK_READER(vid);
-      } catch (e) {
-        sketch = null;
-      }
+    try {
+      sketch = await LANDMARK_READER(vid);
+    } catch (e) {
+      sketch = null;
     }
-
     if (!sketch || !sketch.points) {
-      // Honest gap: no reader packed (or reader returned nothing).
-      // Store nothing. A pixel diff is not a face.
-      setStatus("not packed — landmark reader missing; nothing stored for \"" + currentLabel + "\"");
-      speak("not packed");
+      setStatus("No face landmarks in frame — nothing stored for \"" + currentLabel + "\"");
+      speak("not taught");
       return;
     }
-
     await putSketch(currentLabel, {
       points: sketch.points,
       sketchDataUrl: sketch.sketchDataUrl || null,
-      note: "sketch saved"
+      note: "68-point sketch saved; pixels dropped"
     });
     setStatus("Saved sketch for \"" + currentLabel + "\". Pixels dropped.");
     speak("saved");
@@ -265,21 +414,12 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
   async function doTest(){
     if (!stream || !currentLabel) return;
     testResult.textContent = "Testing…";
-
     const stored = await getSketch(currentLabel);
     if (!stored || !stored.points) {
       testResult.textContent = "not taught";
       speak("not taught");
       return;
     }
-
-    if (typeof LANDMARK_READER !== "function") {
-      // Should not reach here with points present and no reader, but stay honest.
-      testResult.textContent = "not packed";
-      speak("not packed");
-      return;
-    }
-
     let live = null;
     try {
       live = await LANDMARK_READER(vid);
@@ -291,12 +431,16 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
       speak("not taught");
       return;
     }
-    // Future: real geometric comparison of live.points vs stored.points.
-    testResult.textContent = "this is the " + currentLabel + " you taught";
-    speak("this is the " + currentLabel + " you taught");
+    const dist = meanDistance(stored.points, live.points);
+    if (dist <= MATCH_THRESHOLD) {
+      testResult.textContent = "this is the " + currentLabel + " you taught";
+      speak("this is the " + currentLabel + " you taught");
+    } else {
+      testResult.textContent = "not taught";
+      speak("not taught");
+    }
   }
 
-  // --- UI wiring ---
   LABELS.forEach(lab => {
     const b = document.createElement("button");
     b.type = "button";
@@ -326,10 +470,10 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
     setStatus("All taught sketches cleared.");
   });
 
-  // Init
   openDB().then(d => { db = d; return refreshTaught(); }).catch(() => {
     setStatus("IndexedDB unavailable on this origin.");
   });
+  initReader();
 })();
 </script>
 </body>
