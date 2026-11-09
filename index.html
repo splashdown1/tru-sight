@@ -71,7 +71,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
 
   <article class="card">
     <div class="k">GAP</div>
-    <div class="gap">No landmark reader is packed in this file. Capture and Test will record the intent and keep the store structure, but they cannot extract points or draw a sketch. A pixel diff is not a face. When a reader is later packed, the same IndexedDB keys will hold real sketches.</div>
+    <div class="gap">No landmark reader is packed in this file. Capture stores nothing and says not packed. Test says not taught. A pixel diff is not a face. When a reader is later packed, the same IndexedDB keys will hold real sketches.</div>
     <div class="src" style="margin-top:8px;color:var(--dim);font-size:12px">Honest set only: face here, no face, eyes open, eyes shut, smile, grin, mouth open, brow up, brow down, look left, look right, look down, cry (only if mouth + brow were taught together).</div>
   </article>
 
@@ -131,7 +131,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
     window.speechSynthesis.speak(u);
   }
 
-  // --- IndexedDB: store only what was taught ---
+  // --- IndexedDB: store only real sketches (points required) ---
   function openDB(){
     return new Promise((resolve, reject) => {
       const req = indexedDB.open("tru-sight", 1);
@@ -230,7 +230,7 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
     setStatus("Camera off. Landmark reader: not packed.");
   }
 
-  // --- Capture / Test (honest path when no reader) ---
+  // --- Capture / Test ---
   async function doCapture(){
     if (!stream || !currentLabel) return;
     setStatus("Reading one frame for \"" + currentLabel + "\"…");
@@ -244,24 +244,21 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
       }
     }
 
-    if (!sketch) {
-      // Honest gap: no reader packed. Still record that the person intended this label,
-      // but do not invent points or keep pixels.
-      await putSketch(currentLabel, {
-        points: null,
-        note: "intent recorded; landmark reader not packed; no pixels kept"
-      });
-      setStatus("Gap: landmark reader not packed. Intent for \"" + currentLabel + "\" stored. No sketch.");
+    if (!sketch || !sketch.points) {
+      // Honest gap: no reader packed (or reader returned nothing).
+      // Store nothing. A pixel diff is not a face.
+      setStatus("not packed — landmark reader missing; nothing stored for \"" + currentLabel + "\"");
       speak("not packed");
-    } else {
-      await putSketch(currentLabel, {
-        points: sketch.points || null,
-        sketchDataUrl: sketch.sketchDataUrl || null,
-        note: "sketch saved"
-      });
-      setStatus("Saved sketch for \"" + currentLabel + "\". Pixels dropped.");
-      speak("saved");
+      return;
     }
+
+    await putSketch(currentLabel, {
+      points: sketch.points,
+      sketchDataUrl: sketch.sketchDataUrl || null,
+      note: "sketch saved"
+    });
+    setStatus("Saved sketch for \"" + currentLabel + "\". Pixels dropped.");
+    speak("saved");
     await refreshTaught();
   }
 
@@ -270,16 +267,16 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
     testResult.textContent = "Testing…";
 
     const stored = await getSketch(currentLabel);
-    if (!stored) {
+    if (!stored || !stored.points) {
       testResult.textContent = "not taught";
       speak("not taught");
       return;
     }
 
     if (typeof LANDMARK_READER !== "function") {
-      // We know the label was taught as intent, but cannot match geometry.
-      testResult.textContent = "this is the " + currentLabel + " you taught (intent only; no geometry reader)";
-      speak("this is the " + currentLabel + " you taught");
+      // Should not reach here with points present and no reader, but stay honest.
+      testResult.textContent = "not packed";
+      speak("not packed");
       return;
     }
 
@@ -289,12 +286,12 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:13px}
     } catch (e) {
       live = null;
     }
-    if (!live || !stored.points) {
+    if (!live || !live.points) {
       testResult.textContent = "not taught";
       speak("not taught");
       return;
     }
-    // Future: real geometric comparison here.
+    // Future: real geometric comparison of live.points vs stored.points.
     testResult.textContent = "this is the " + currentLabel + " you taught";
     speak("this is the " + currentLabel + " you taught");
   }
