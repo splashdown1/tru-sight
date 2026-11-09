@@ -1,0 +1,1 @@
+window.TRU_SIGHT_PACK_3 = PLACEHOLDER;
